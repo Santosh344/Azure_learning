@@ -1,0 +1,18 @@
+{
+	"name": "LS_SQL_to_Azure",
+	"type": "Microsoft.DataFactory/factories/linkedservices",
+	"properties": {
+		"description": "this pipelines linked it to SQL ",
+		"annotations": [],
+		"type": "AzureSqlDatabase",
+		"typeProperties": {
+			"server": "santosh-azureserver.database.windows.net",
+			"database": "santosh-database",
+			"encrypt": "mandatory",
+			"trustServerCertificate": false,
+			"authenticationType": "SQL",
+			"userName": "adminsantosh",
+			"encryptedCredential": "ew0KICAiVmVyc2lvbiI6ICIyMDE3LTExLTMwIiwNCiAgIlByb3RlY3Rpb25Nb2RlIjogIktleSIsDQogICJTZWNyZXRDb250ZW50VHlwZSI6ICJQbGFpbnRleHQiLA0KICAiQ3JlZGVudGlhbElkIjogIkRBVEFGQUNUT1JZQDRDM0VGRjFCLUEzQ0YtNDRFRC04Mzc5LTYxNUM4NTkxRkQyOF9hNjZkNGYyNC04YjNlLTQzOGYtYTliNS00MmI5NmU3NDFkNTEiDQp9"
+		}
+	}
+}

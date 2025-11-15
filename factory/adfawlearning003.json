@@ -1,0 +1,9 @@
+{
+	"name": "adfawlearning003",
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "08c46269-5675-49b5-b034-faf409b645fb",
+		"tenantId": "77400552-aff3-46d5-9cbe-a35ab9ac3716"
+	}
+}

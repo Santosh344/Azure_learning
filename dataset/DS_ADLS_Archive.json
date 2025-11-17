@@ -18,7 +18,8 @@
 				"folderPath": {
 					"value": "@dataset().FolderName",
 					"type": "Expression"
-				}
+				},
+				"fileSystem": "archive"
 			},
 			"compressionCodec": "snappy"
 		},

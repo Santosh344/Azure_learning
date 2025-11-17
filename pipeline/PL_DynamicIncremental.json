@@ -17,13 +17,15 @@
 				"typeProperties": {
 					"source": {
 						"type": "AzureSqlSource",
+						"sqlReaderQuery": "SELECT TableName, IncrementalColumn, LastWatermark\nFROM dbo.TableConfig\nWHERE TableName IS NOT NULL\n",
 						"queryTimeout": "02:00:00",
 						"partitionOption": "None"
 					},
 					"dataset": {
 						"referenceName": "DS_SQL_TableConfig",
 						"type": "DatasetReference"
-					}
+					},
+					"firstRowOnly": false
 				}
 			},
 			{
@@ -40,7 +42,7 @@
 				"userProperties": [],
 				"typeProperties": {
 					"items": {
-						"value": "@activity('Lookup_TableConfig').output",
+						"value": "@activity('Lookup_TableConfig').output.value",
 						"type": "Expression"
 					},
 					"isSequential": true,
@@ -48,7 +50,14 @@
 						{
 							"name": "Copy_To_Bronze",
 							"type": "Copy",
-							"dependsOn": [],
+							"dependsOn": [
+								{
+									"activity": "Set_CurrentFileName",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
 							"policy": {
 								"timeout": "0.12:00:00",
 								"retry": 0,
@@ -60,7 +69,10 @@
 							"typeProperties": {
 								"source": {
 									"type": "AzureSqlSource",
-									"sqlReaderQuery": "SELECT *\nFROM @{item().TableName}\n@{item().IncrementalColumn != null ?\n   concat(' WHERE ', item().IncrementalColumn, ' > ''', item().LastWatermark, '''')\n: ''}\n",
+									"sqlReaderQuery": {
+										"value": "@concat(\n    'SELECT * FROM ', \n    item().TableName, \n    if(\n        equals(item().IncrementalColumn, null), \n        '', \n        concat(' WHERE ', item().IncrementalColumn, ' > ''', item().LastWatermark, '''')\n    )\n)\n",
+										"type": "Expression"
+									},
 									"queryTimeout": "02:00:00",
 									"partitionOption": "None"
 								},
@@ -111,11 +123,333 @@
 									}
 								}
 							]
+						},
+						{
+							"name": "Check_Empty_File",
+							"type": "IfCondition",
+							"dependsOn": [
+								{
+									"activity": "Copy_To_Bronze",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"userProperties": [],
+							"typeProperties": {
+								"expression": {
+									"value": "@equals(activity('Copy_To_Bronze').output.rowsCopied, 0)\n",
+									"type": "Expression"
+								},
+								"ifFalseActivities": [
+									{
+										"name": "MovingOldFiles",
+										"type": "GetMetadata",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"dataset": {
+												"referenceName": "DS_ADLS_Bronze",
+												"type": "DatasetReference",
+												"parameters": {
+													"fonderName": "@item().TableName",
+													"fileName": {
+														"value": "@item().fileName",
+														"type": "Expression"
+													}
+												}
+											},
+											"fieldList": [
+												"childItems"
+											],
+											"storeSettings": {
+												"type": "AzureBlobFSReadSettings",
+												"enablePartitionDiscovery": false
+											},
+											"formatSettings": {
+												"type": "ParquetReadSettings"
+											}
+										}
+									},
+									{
+										"name": "ageData",
+										"type": "Filter",
+										"dependsOn": [
+											{
+												"activity": "MovingOldFiles",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"userProperties": [],
+										"typeProperties": {
+											"items": {
+												"value": "@activity('GetMetadata_Bronze').output.childItems",
+												"type": "Expression"
+											},
+											"condition": {
+												"value": "@lessOrEquals(\n    int(formatDateTime(item().lastModified,'yyyyMMdd')),\n    int(formatDateTime(addToTime(utcNow(), -5, 'Year'),'yyyyMMdd'))\n)\n",
+												"type": "Expression"
+											}
+										}
+									},
+									{
+										"name": "archive",
+										"type": "Copy",
+										"dependsOn": [
+											{
+												"activity": "ageData",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "ParquetSource",
+												"storeSettings": {
+													"type": "AzureBlobFSReadSettings",
+													"recursive": true,
+													"enablePartitionDiscovery": false
+												},
+												"formatSettings": {
+													"type": "ParquetReadSettings"
+												}
+											},
+											"sink": {
+												"type": "ParquetSink",
+												"storeSettings": {
+													"type": "AzureBlobFSWriteSettings"
+												},
+												"formatSettings": {
+													"type": "ParquetWriteSettings"
+												}
+											},
+											"enableStaging": false,
+											"translator": {
+												"type": "TabularTranslator",
+												"typeConversion": true,
+												"typeConversionSettings": {
+													"allowDataTruncation": true,
+													"treatBooleanAsNumber": false
+												}
+											}
+										},
+										"inputs": [
+											{
+												"referenceName": "DS_ADLS_Bronze",
+												"type": "DatasetReference",
+												"parameters": {
+													"fonderName": {
+														"value": "@item().FolderName\n",
+														"type": "Expression"
+													},
+													"fileName": {
+														"value": "@item().fileName",
+														"type": "Expression"
+													}
+												}
+											}
+										],
+										"outputs": [
+											{
+												"referenceName": "DS_ADLS_Archive",
+												"type": "DatasetReference",
+												"parameters": {
+													"FolderName": {
+														"value": "@item().FolderName",
+														"type": "Expression"
+													}
+												}
+											}
+										]
+									},
+									{
+										"name": "deletefrom Original",
+										"type": "Delete",
+										"dependsOn": [
+											{
+												"activity": "archive",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"dataset": {
+												"referenceName": "DS_ADLS_Bronze",
+												"type": "DatasetReference",
+												"parameters": {
+													"fonderName": {
+														"value": "@item().FolderName",
+														"type": "Expression"
+													},
+													"fileName": "@item().name"
+												}
+											},
+											"enableLogging": false,
+											"storeSettings": {
+												"type": "AzureBlobFSReadSettings",
+												"recursive": true,
+												"enablePartitionDiscovery": false
+											}
+										}
+									}
+								],
+								"ifTrueActivities": [
+									{
+										"name": "Copy_EmptyFile_To_Duplicates",
+										"type": "Copy",
+										"dependsOn": [],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"source": {
+												"type": "ParquetSource",
+												"storeSettings": {
+													"type": "AzureBlobFSReadSettings",
+													"recursive": true,
+													"enablePartitionDiscovery": false
+												},
+												"formatSettings": {
+													"type": "ParquetReadSettings"
+												}
+											},
+											"sink": {
+												"type": "ParquetSink",
+												"storeSettings": {
+													"type": "AzureBlobFSWriteSettings"
+												},
+												"formatSettings": {
+													"type": "ParquetWriteSettings"
+												}
+											},
+											"enableStaging": false,
+											"translator": {
+												"type": "TabularTranslator",
+												"typeConversion": true,
+												"typeConversionSettings": {
+													"allowDataTruncation": true,
+													"treatBooleanAsNumber": false
+												}
+											}
+										},
+										"inputs": [
+											{
+												"referenceName": "DS_ADLS_Bronze",
+												"type": "DatasetReference",
+												"parameters": {
+													"fonderName": "@item().TableName",
+													"fileName": "@concat(item().TableName,'_',formatDateTime(utcNow(),'yyyyMMdd_HHmmss'),'.parquet')"
+												}
+											}
+										],
+										"outputs": [
+											{
+												"referenceName": "DS_ADLS_Duplicates",
+												"type": "DatasetReference",
+												"parameters": {
+													"FolderName": "@item().TableName",
+													"fileName": {
+														"value": "@variables('CurrentFileName')\n",
+														"type": "Expression"
+													}
+												}
+											}
+										]
+									},
+									{
+										"name": "Delete_Original_File",
+										"type": "Delete",
+										"dependsOn": [
+											{
+												"activity": "Copy_EmptyFile_To_Duplicates",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.12:00:00",
+											"retry": 0,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"dataset": {
+												"referenceName": "DS_ADLS_Bronze",
+												"type": "DatasetReference",
+												"parameters": {
+													"fonderName": "@item().TableName",
+													"fileName": "@variables('CurrentFileName')"
+												}
+											},
+											"enableLogging": false,
+											"storeSettings": {
+												"type": "AzureBlobFSReadSettings",
+												"recursive": true,
+												"enablePartitionDiscovery": false
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"name": "Set_CurrentFileName",
+							"type": "SetVariable",
+							"dependsOn": [],
+							"policy": {
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"typeProperties": {
+								"variableName": "CurrentFileName",
+								"value": "@concat(item().TableName,'_',formatDateTime(utcNow(),'yyyyMMdd_HHmmss'),'.parquet')\n"
+							}
 						}
 					]
 				}
 			}
 		],
+		"variables": {
+			"CurrentFileName": {
+				"type": "String"
+			}
+		},
 		"annotations": []
 	}
 }
